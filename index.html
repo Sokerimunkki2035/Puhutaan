@@ -1,60 +1,94 @@
 <!DOCTYPE html>
-<html>
+<html lang="fi">
 <head>
-    <title>Openrouter.ai API-avain</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tuki-AI & Muisti</title>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; }
-        input, button { padding: 8px; margin: 5px 0; }
-        #conversation { margin-top: 20px; border: 1px solid #ccc; padding: 10px; min-height: 100px; }
+        body { font-family: 'Segoe UI', Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; background-color: #f4f7f6; }
+        .container { background: white; padding: 20px; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        input, button { padding: 12px; margin: 5px 0; border-radius: 8px; border: 1px solid #ddd; width: 100%; box-sizing: border-box; }
+        button { background-color: #4a90e2; color: white; border: none; cursor: pointer; font-weight: bold; }
+        button:disabled { background-color: #ccc; }
+        .secondary-btn { background-color: #7f8c8d; margin-top: 10px; }
+        #status { color: #666; font-style: italic; margin-bottom: 10px; text-align: center; }
+        #conversation { margin-top: 20px; max-height: 400px; overflow-y: auto; border-top: 2px solid #eee; padding-top: 10px; }
+        .user-msg { color: #2c3e50; margin-bottom: 10px; padding: 5px; border-left: 3px solid #4a90e2; }
+        .ai-msg { color: #27ae60; margin-bottom: 15px; font-weight: bold; padding: 5px; border-left: 3px solid #27ae60; }
     </style>
 </head>
 <body>
-    <h2>Syötä Openrouter.ai API-avain</h2>
-    <input type="password" id="apiKeyInput" placeholder="Syötä API-avain" />
-    <button id="saveKeyBtn">Tallenna avain</button>
+    <div class="container">
+        <h2>Oma Tuki</h2>
+        
+        <div id="setupSection">
+            <input type="password" id="apiKeyInput" placeholder="Syötä Openrouter API-avain">
+            <button id="saveKeyBtn">Tallenna ja aloita</button>
+        </div>
 
-    <button id="startBtn" disabled>Aloita kuuntelu</button>
-    <div id="conversation"></div>
+        <p id="status">Valmis auttamaan.</p>
+        <button id="startBtn" style="display:none; background-color: #e74c3c;">Puhu nyt</button>
+        
+        <div id="conversation"></div>
+
+        <button id="downloadBtn" class="secondary-btn">Lataa keskustelu (.txt)</button>
+        <button id="clearBtn" class="secondary-btn" style="background-color: #c0392b;">Tyhjennä historia</button>
+    </div>
 
     <script>
         const apiKeyInput = document.getElementById('apiKeyInput');
         const saveKeyBtn = document.getElementById('saveKeyBtn');
         const startBtn = document.getElementById('startBtn');
+        const statusPara = document.getElementById('status');
         const conversationDiv = document.getElementById('conversation');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const clearBtn = document.getElementById('clearBtn');
 
-        // Tallenna API-avain localStorageen
+        // Ladataan aiempi historia muistista heti alussa
+        let chatHistory = JSON.parse(localStorage.getItem('therapyChatHistory')) || [];
+        renderHistory();
+
+        if (localStorage.getItem('openrouterApiKey')) {
+            document.getElementById('setupSection').style.display = 'none';
+            startBtn.style.display = 'block';
+        }
+
+        function renderHistory() {
+            conversationDiv.innerHTML = chatHistory.map(msg => 
+                `<div class="${msg.role === 'user' ? 'user-msg' : 'ai-msg'}">
+                    <strong>${msg.role === 'user' ? 'Sinä' : 'Tuki'}:</strong> ${msg.content}
+                </div>`
+            ).join('');
+            conversationDiv.scrollTop = conversationDiv.scrollHeight;
+        }
+
         saveKeyBtn.addEventListener('click', () => {
             const apiKey = apiKeyInput.value.trim();
             if (apiKey) {
                 localStorage.setItem('openrouterApiKey', apiKey);
-                alert('API-avain tallennettu!');
-                startBtn.disabled = false;
-            } else {
-                alert('Syötä API-avain!');
+                document.getElementById('setupSection').style.display = 'none';
+                startBtn.style.display = 'block';
             }
         });
 
-        // Puheentunnistus
         const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
         recognition.lang = 'fi-FI';
-
-        // Puhesyntetisaattori
         const synth = window.speechSynthesis;
 
         startBtn.addEventListener('click', () => {
             recognition.start();
+            statusPara.innerText = "Kuunnellaan...";
+            startBtn.disabled = true;
         });
 
         recognition.onresult = async (event) => {
             const userInput = event.results[0][0].transcript;
-            conversationDiv.innerHTML += `<p><strong>Sinä:</strong> ${userInput}</p>`;
+            statusPara.innerText = "Käsitellään...";
+            
+            chatHistory.push({ role: "user", content: userInput });
+            renderHistory();
 
-            // Haetaan tallennettu API-avain
             const apiKey = localStorage.getItem('openrouterApiKey');
-            if (!apiKey) {
-                conversationDiv.innerHTML += `<p><strong>Virhe:</strong> API-avainta ei ole tallennettu.</p>`;
-                return;
-            }
 
             try {
                 const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
@@ -65,27 +99,54 @@
                     },
                     body: JSON.stringify({
                         model: "mistralai/mistral-7b-instruct",
-                        messages: [{ role: "user", content: userInput }]
+                        messages: [
+                            { role: "system", content: "Olet empaattinen tukihenkilö. Vastaa suomeksi, lyhyesti ja lohduttavasti." },
+                            ...chatHistory // Lähetetään historia tekoälylle, jotta se muistaa mitä on puhuttu
+                        ]
                     })
                 });
 
-                if (!response.ok) {
-                    throw new Error(`API-virhe: ${response.status} ${response.statusText}`);
-                }
-
                 const data = await response.json();
                 const aiResponse = data.choices[0].message.content;
-                conversationDiv.innerHTML += `<p><strong>Tekoäly:</strong> ${aiResponse}</p>`;
+                
+                chatHistory.push({ role: "assistant", content: aiResponse });
+                localStorage.setItem('therapyChatHistory', JSON.stringify(chatHistory));
+                renderHistory();
 
-                // Lue vastaus ääneen
                 const utterance = new SpeechSynthesisUtterance(aiResponse);
                 utterance.lang = 'fi-FI';
+                utterance.onend = () => {
+                    statusPara.innerText = "Valmis kuuntelemaan.";
+                    startBtn.disabled = false;
+                };
                 synth.speak(utterance);
+
             } catch (error) {
-                console.error("Virhe:", error);
-                conversationDiv.innerHTML += `<p><strong>Virhe:</strong> ${error.message}</p>`;
+                statusPara.innerText = "Virhe tapahtui.";
+                startBtn.disabled = false;
             }
         };
+
+        // Keskustelun lataaminen tiedostona
+        downloadBtn.addEventListener('click', () => {
+            const textContent = chatHistory.map(m => `${m.role === 'user' ? 'MINÄ' : 'AI'}: ${m.content}`).join('\n\n');
+            const blob = new Blob([textContent], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `keskustelu_${new Date().toLocaleDateString()}.txt`;
+            a.click();
+        });
+
+        // Historian tyhjennys
+        clearBtn.addEventListener('click', () => {
+            if(confirm("Haluatko varmasti poistaa koko historian?")) {
+                chatHistory = [];
+                localStorage.removeItem('therapyChatHistory');
+                renderHistory();
+            }
+        });
     </script>
 </body>
 </html>
+ 
